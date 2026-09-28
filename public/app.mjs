@@ -709,22 +709,36 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 9. DETAILED RECIPE MODAL LOGIC (`stitch-dialog-full`)
   // -------------------------------------------------------------------
   async function openRecipeModal(recipeId, cachedRecipe = null) {
-    showToast('Loading full recipe instructions...', 'info');
-
     let recipe = cachedRecipe;
 
+    if (!recipe) {
+      showToast('Loading recipe...', 'info');
+      return;
+    }
+
+    // Open modal immediately with cached data
+    renderRecipeModal(recipe);
+
+    // Silently enhance with extra data from API in the background
     try {
-      const res = await fetch(`/api/recipes/${recipeId}/information`);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000); // 5s timeout
+      const res = await fetch(`/api/recipes/${recipeId}/information`, { signal: controller.signal });
+      clearTimeout(timeout);
       if (res.ok) {
         const payload = await res.json();
         if (payload.data) {
           recipe = { ...recipe, ...payload.data };
+          state.activeRecipeDetail = recipe;
+          renderRecipeModal(recipe);
         }
       }
     } catch (err) {
-      console.warn('Could not fetch extra recipe info, rendering basic recipe:', err);
+      // Silently ignore — modal is already open with cached data
     }
+  }
 
+  function renderRecipeModal(recipe) {
     if (!recipe) return;
 
     state.activeRecipeDetail = recipe;
