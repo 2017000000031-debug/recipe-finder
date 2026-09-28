@@ -2,7 +2,22 @@
    BITESIZE - SMART INGREDIENT RECIPE FINDER & MEAL PLANNER (APP.JS)
    =================================================================== */
 
-document.addEventListener('DOMContentLoaded', () => {
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js';
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-auth.js';
+
+document.addEventListener('DOMContentLoaded', async () => {
+  let auth;
+  try {
+    const configRes = await fetch('/api/config/firebase');
+    const fbConfig = await configRes.json();
+    if (fbConfig.apiKey) {
+      const app = initializeApp(fbConfig);
+      auth = getAuth(app);
+    }
+  } catch (err) {
+    console.error('Firebase config fetch failed', err);
+  }
+
 
   // -------------------------------------------------------------------
   // 1. APPLICATION STATE
@@ -78,6 +93,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const authModalBackdrop = document.getElementById('auth-modal-backdrop');
   const closeAuthModalBtn = document.getElementById('close-auth-modal-btn');
   const authForm = document.getElementById('auth-form');
+  const authLogoutBtn = document.getElementById('auth-logout-btn');
   const userDisplayName = document.getElementById('user-display-name');
   const toastContainer = document.getElementById('toast-container');
 
@@ -251,16 +267,56 @@ document.addEventListener('DOMContentLoaded', () => {
       if (e.target === authModalBackdrop) closeAuthModal();
     });
 
-    authForm.addEventListener('submit', (e) => {
+    authForm.addEventListener('submit', async (e) => {
       e.preventDefault();
-      const name = document.getElementById('auth-name-input').value.trim() || 'Chef';
       const email = document.getElementById('auth-email-input').value.trim();
-      state.user = { name, email };
-      localStorage.setItem('bitesize_user', JSON.stringify(state.user));
-      updateUserDisplay();
-      closeAuthModal();
-      showToast(`Welcome back, ${name}! Saved recipes synced.`, 'success');
+      const password = document.getElementById('auth-password-input').value.trim();
+      
+      if (!auth) {
+        showToast('Firebase is not configured.', 'error');
+        return;
+      }
+      
+      try {
+        await signInWithEmailAndPassword(auth, email, password);
+        closeAuthModal();
+        showToast(`Welcome back, ${email.split('@')[0]}!`, 'success');
+      } catch (err) {
+        if (err.code === 'auth/invalid-credential' || err.code === 'auth/user-not-found') {
+          try {
+            await createUserWithEmailAndPassword(auth, email, password);
+            closeAuthModal();
+            showToast('Account created successfully!', 'success');
+          } catch (signupErr) {
+            showToast(signupErr.message, 'error');
+          }
+        } else {
+          showToast(err.message, 'error');
+        }
+      }
     });
+
+    if (authLogoutBtn) {
+      authLogoutBtn.addEventListener('click', () => {
+        if (auth) {
+          signOut(auth).then(() => showToast('Signed out.', 'info')).catch(err => showToast(err.message, 'error'));
+        }
+      });
+    }
+
+    if (auth) {
+      onAuthStateChanged(auth, (user) => {
+        if (user) {
+          state.user = { name: user.email.split('@')[0], email: user.email };
+          authLogoutBtn.classList.remove('hidden');
+        } else {
+          state.user = { name: 'Guest User', email: '' };
+          authLogoutBtn.classList.add('hidden');
+        }
+        updateUserDisplay();
+      });
+    }
+
 
     // Escape Key Handler for Modals
     document.addEventListener('keydown', (e) => {
