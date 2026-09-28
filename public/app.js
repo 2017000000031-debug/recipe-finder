@@ -4,15 +4,18 @@
 
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-auth.js';
+import { getFirestore, doc, setDoc, getDoc } from 'https://www.gstatic.com/firebasejs/10.10.0/firebase-firestore.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
   let auth;
+  let db;
   try {
     const configRes = await fetch('/api/config/firebase');
     const fbConfig = await configRes.json();
     if (fbConfig.apiKey) {
       const app = initializeApp(fbConfig);
       auth = getAuth(app);
+      db = getFirestore(app);
     }
   } catch (err) {
     console.error('Firebase config fetch failed', err);
@@ -24,7 +27,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // -------------------------------------------------------------------
   const state = {
     activeIngredients: ['chicken', 'onion', 'garlic', 'mustard oil'],
-    savedRecipes: JSON.parse(localStorage.getItem('bitesize_saved_recipes') || '[]'),
+    savedRecipes: [],
     currentRecipes: [],
     activeTab: 'discover', // 'discover' | 'saved'
     activeRecipeDetail: null,
@@ -299,20 +302,41 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (authLogoutBtn) {
       authLogoutBtn.addEventListener('click', () => {
         if (auth) {
-          signOut(auth).then(() => showToast('Signed out.', 'info')).catch(err => showToast(err.message, 'error'));
+          signOut(auth).then(() => {
+            window.location.reload();
+          }).catch(err => showToast(err.message, 'error'));
         }
       });
     }
 
     if (auth) {
-      onAuthStateChanged(auth, (user) => {
+      let isFirstLoad = true;
+      onAuthStateChanged(auth, async (user) => {
         if (user) {
-          state.user = { name: user.email.split('@')[0], email: user.email };
+          state.user = { name: user.email.split('@')[0], email: user.email, uid: user.uid };
           authLogoutBtn.classList.remove('hidden');
+          
+          if (db) {
+            try {
+              const docRef = doc(db, 'users', user.uid);
+              const docSnap = await getDoc(docRef);
+              if (docSnap.exists()) {
+                state.savedRecipes = docSnap.data().savedRecipes || [];
+                updateSavedCountBadge();
+                if (state.activeTab === 'saved') renderSavedRecipesGrid();
+              }
+            } catch (err) {
+              console.error('Failed to load saved recipes', err);
+            }
+          }
         } else {
           state.user = { name: 'Guest User', email: '' };
           authLogoutBtn.classList.add('hidden');
+          if (!isFirstLoad) {
+            window.location.reload();
+          }
         }
+        isFirstLoad = false;
         updateUserDisplay();
       });
     }
@@ -649,7 +673,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  function toggleBookmark(recipe) {
+  async function toggleBookmark(recipe) {
     const index = state.savedRecipes.findIndex(r => r.id === recipe.id);
     if (index > -1) {
       state.savedRecipes.splice(index, 1);
@@ -659,7 +683,17 @@ document.addEventListener('DOMContentLoaded', async () => {
       showToast(`Saved "${recipe.title}" to favorites! ❤️`, 'success');
     }
 
-    localStorage.setItem('bitesize_saved_recipes', JSON.stringify(state.savedRecipes));
+    if (auth && auth.currentUser && db) {
+      try {
+        await setDoc(doc(db, 'users', auth.currentUser.uid), {
+          savedRecipes: state.savedRecipes
+        }, { merge: true });
+      } catch (err) {
+        console.error('Failed to sync to Firestore', err);
+        showToast('Failed to sync with cloud.', 'error');
+      }
+    }
+
     updateSavedCountBadge();
 
     if (state.activeTab === 'saved') {
